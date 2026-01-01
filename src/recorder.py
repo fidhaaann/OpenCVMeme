@@ -3,41 +3,50 @@ import os
 import time
 import mediapipe as mp
 
-SAVE_DIR = "data/videos"
-os.makedirs(SAVE_DIR, exist_ok=True)
+# ================= CONFIG =================
+BASE_DIR = "data"
+VIDEO_DIR = os.path.join(BASE_DIR, "videos")
+PHOTO_DIR = os.path.join(BASE_DIR, "photos")
+
+os.makedirs(VIDEO_DIR, exist_ok=True)
+os.makedirs(PHOTO_DIR, exist_ok=True)
 
 mp_hands = mp.solutions.hands
 mp_face = mp.solutions.face_mesh
 mp_draw = mp.solutions.drawing_utils
 
+
 def main():
+    print("\n=== Gesture Recorder ===")
+    gesture = input("Enter gesture name: ").strip()
+
+    video_path = os.path.join(VIDEO_DIR, gesture)
+    photo_path = os.path.join(PHOTO_DIR, gesture)
+    os.makedirs(video_path, exist_ok=True)
+    os.makedirs(photo_path, exist_ok=True)
+
     cap = cv2.VideoCapture(0)
 
-    # Configure trackers
     hands = mp_hands.Hands(
         max_num_hands=2,
         min_detection_confidence=0.6,
         min_tracking_confidence=0.6
     )
+
     face = mp_face.FaceMesh(
         max_num_faces=1,
-        refine_landmarks=True,
         min_detection_confidence=0.6,
         min_tracking_confidence=0.6
     )
 
-    # Video writer settings
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    if not fps or fps <= 0:
-        fps = 30.0
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
-    print("Press R to start/stop recording | Q to quit")
+    print("\nControls:")
+    print(" R → Start recording")
+    print(" S → Stop recording")
+    print(" P → Take photo")
+    print(" Q → Quit")
 
     recording = False
-    writer = None
-    current_label = None
+    out = None
 
     while True:
         ret, frame = cap.read()
@@ -47,59 +56,73 @@ def main():
         frame = cv2.flip(frame, 1)
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-        # Run trackers
-        h_res = hands.process(rgb)
-        f_res = face.process(rgb)
+        # ---- PROCESS DETECTION ----
+        hand_results = hands.process(rgb)
+        face_results = face.process(rgb)
 
-        # Draw landmarks
-        if h_res.multi_hand_landmarks:
-            for hand_lm in h_res.multi_hand_landmarks:
-                mp_draw.draw_landmarks(frame, hand_lm, mp_hands.HAND_CONNECTIONS)
-        if f_res.multi_face_landmarks:
-            for face_lm in f_res.multi_face_landmarks:
-                mp_draw.draw_landmarks(frame, face_lm, mp_face.FACEMESH_TESSELATION)
+        # Draw hand landmarks
+        if hand_results.multi_hand_landmarks:
+            for hand_landmarks in hand_results.multi_hand_landmarks:
+                mp_draw.draw_landmarks(
+                    frame, hand_landmarks, mp_hands.HAND_CONNECTIONS
+                )
 
-        # Status text
-        hands_count = len(h_res.multi_hand_landmarks) if h_res.multi_hand_landmarks else 0
-        faces_count = len(f_res.multi_face_landmarks) if f_res.multi_face_landmarks else 0
-        cv2.putText(frame, f"Hands: {hands_count} | Faces: {faces_count}", (20, 30),
+        # Draw face landmarks
+        if face_results.multi_face_landmarks:
+            for face_landmarks in face_results.multi_face_landmarks:
+                mp_draw.draw_landmarks(
+                    frame, face_landmarks, mp_face.FACEMESH_TESSELATION
+                )
+
+        # UI text
+        cv2.putText(frame, f"Gesture: {gesture}", (20, 40),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
 
-        # Write video while recording
-        if recording and writer is not None:
-            writer.write(frame)
-            cv2.putText(frame, f"REC: {current_label}", (20, 60),
+        if recording:
+            cv2.putText(frame, "RECORDING...", (20, 80),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
 
-        cv2.imshow("Recorder", frame)
+        cv2.imshow("Gesture Recorder", frame)
+
         key = cv2.waitKey(1) & 0xFF
 
+        # ---- RECORD VIDEO ----
         if key == ord('r'):
-            if not recording:
-                # Start recording
-                current_label = input("Gesture name: ").strip() or "unnamed"
-                out_dir = os.path.join(SAVE_DIR, current_label)
-                os.makedirs(out_dir, exist_ok=True)
-                out_path = os.path.join(out_dir, f"{int(time.time())}.mp4")
-                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-                writer = cv2.VideoWriter(out_path, fourcc, fps, (width, height))
-                recording = True
-                print(f"Recording started: {out_path}")
-            else:
-                # Stop recording
-                recording = False
-                if writer is not None:
-                    writer.release()
-                    writer = None
-                print("Recording stopped")
+            filename = f"{gesture}_{int(time.time())}.mp4"
+            filepath = os.path.join(video_path, filename)
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            out = cv2.VideoWriter(
+                filepath,
+                fourcc,
+                20,
+                (frame.shape[1], frame.shape[0])
+            )
+            recording = True
+            print(f"Recording started: {filepath}")
 
+        # ---- STOP RECORDING ----
+        elif key == ord('s') and recording:
+            recording = False
+            out.release()
+            print("Recording stopped")
+
+        # ---- TAKE PHOTO ----
+        elif key == ord('p'):
+            filename = f"{gesture}_{int(time.time())}.jpg"
+            filepath = os.path.join(photo_path, filename)
+            cv2.imwrite(filepath, frame)
+            print(f"Photo saved: {filepath}")
+
+        # ---- EXIT ----
         elif key == ord('q'):
             break
 
-    if writer is not None:
-        writer.release()
+        if recording:
+            out.write(frame)
+
     cap.release()
     cv2.destroyAllWindows()
+
 
 if __name__ == "__main__":
     main()
