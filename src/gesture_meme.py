@@ -1,18 +1,56 @@
 import cv2
 import mediapipe as mp
-import numpy as np
-import os
-import time
+from joblib import load
+from collections import deque, Counter
 
+# ---------------- LOAD MODEL ----------------
+model = load("models/gesture_model.joblib")
+
+# ---------------- SMOOTHING ----------------
+PREDICTION_WINDOW = 20
+prediction_buffer = deque(maxlen=PREDICTION_WINDOW)
+
+# ---------------- MEDIAPIPE ----------------
 mp_hands = mp.solutions.hands
 mp_face = mp.solutions.face_mesh
 mp_draw = mp.solutions.drawing_utils
 
-def main():
-    # Prepare video recording (optional, toggled by 'r')
-    SAVE_DIR = "data/videos"
-    os.makedirs(SAVE_DIR, exist_ok=True)
 
+def extract_features(frame, hands, face):
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    h_res = hands.process(rgb)
+    f_res = face.process(rgb)
+
+    # ---------------- HAND FEATURES ----------------
+    hand_features = []
+
+    if h_res.multi_hand_landmarks:
+        for i in range(2):
+            if i < len(h_res.multi_hand_landmarks):
+                for lm in h_res.multi_hand_landmarks[i].landmark:
+                    hand_features.extend([lm.x, lm.y, lm.z])
+            else:
+                hand_features.extend([0] * 63)
+    else:
+        hand_features.extend([0] * 126)
+
+    # ---------------- FACE FEATURES ----------------
+    face_features = []
+
+    if f_res.multi_face_landmarks:
+        for lm in f_res.multi_face_landmarks[0].landmark:
+            face_features.extend([lm.x, lm.y, lm.z])
+    else:
+        face_features.extend([0] * (468 * 3))
+
+    # ---------------- SAME SCALING ----------------
+    hand_features = [v * 2.0 for v in hand_features]
+    face_features = [v * 0.3 for v in face_features]
+
+    return hand_features + face_features, h_res, f_res
+
+
+def main():
     cap = cv2.VideoCapture(0)
 
     hands = mp_hands.Hands(
@@ -23,7 +61,6 @@ def main():
 
     face = mp_face.FaceMesh(
         max_num_faces=1,
-        refine_landmarks=True,
         min_detection_confidence=0.6,
         min_tracking_confidence=0.6
     )
@@ -33,94 +70,56 @@ def main():
         if not ret:
             break
 
-        # Init writer lazily after camera reports props
-        if 'writer' not in locals():
-            fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            recording = False
-            writer = None
-            current_label = None
-
         frame = cv2.flip(frame, 1)
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-        hand_results = hands.process(rgb)
-        face_results = face.process(rgb)
+        features, h_res, f_res = extract_features(frame, hands, face)
 
-        # ---- Draw hands ----
-        if hand_results.multi_hand_landmarks:
-            for hand_landmarks in hand_results.multi_hand_landmarks:
+        # ---- DRAW LANDMARKS ----
+        if h_res.multi_hand_landmarks:
+            for hand_landmarks in h_res.multi_hand_landmarks:
                 mp_draw.draw_landmarks(
-                    frame,
-                    hand_landmarks,
-                    mp_hands.HAND_CONNECTIONS
+                    frame, hand_landmarks, mp_hands.HAND_CONNECTIONS
                 )
 
-        # ---- Draw face ----
-        if face_results.multi_face_landmarks:
-            for face_landmarks in face_results.multi_face_landmarks:
+        if f_res.multi_face_landmarks:
+            for face_landmarks in f_res.multi_face_landmarks:
                 mp_draw.draw_landmarks(
-                    frame,
-                    face_landmarks,
-                    mp_face.FACEMESH_TESSELATION
+                    frame, face_landmarks, mp_face.FACEMESH_TESSELATION
                 )
 
-        # ---- Write video while recording ----
-        if recording and writer is not None:
-            writer.write(frame)
-            cv2.putText(
-                frame,
-                f"REC: {current_label}",
-                (20, 60),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.8,
-                (0, 0, 255),
-                2
-            )
+        # ---- PREDICTION ----
+        raw_pred = model.predict([features])[0]
+        prediction_buffer.append(raw_pred)
 
-        # ---- Status text ----
-        hands_count = len(hand_results.multi_hand_landmarks) if hand_results.multi_hand_landmarks else 0
-        faces_count = len(face_results.multi_face_landmarks) if face_results.multi_face_landmarks else 0
-        cv2.putText(
-            frame,
-            f"Hands: {hands_count} | Faces: {faces_count}",
-            (20, 30),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.8,
-            (0, 255, 0),
-            2
-        )
+        if len(prediction_buffer) == PREDICTION_WINDOW:
+            final_pred = Counter(prediction_buffer).most_common(1)[0][0]
+            confidence = Counter(prediction_buffer)[final_pred] / PREDICTION_WINDOW
+        else:
+            final_pred = raw_pred
+            confidence = 0.0
 
-        cv2.imshow("Hands + Face Detection", frame)
+        # ---- DISPLAY ----
+        cv2.putText(frame, f"Gesture: {final_pred}",
+                    (20, 40),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.9,
+                    (0, 255, 0),
+                    2)
 
-        key = cv2.waitKey(1) & 0xFF
+        if confidence > 0:
+            cv2.putText(frame, f"Confidence: {confidence:.2f}",
+                        (20, 80),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.8,
+                        (255, 255, 0),
+                        2)
 
-        # Toggle recording with 'r'
-        if key == ord('r'):
-            if not recording:
-                current_label = (input("Gesture name: ") or "unnamed").strip()
-                out_dir = os.path.join(SAVE_DIR, current_label)
-                os.makedirs(out_dir, exist_ok=True)
-                out_path = os.path.join(out_dir, f"{int(time.time())}.mp4")
-                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-                writer = cv2.VideoWriter(out_path, fourcc, float(fps), (width, height))
-                recording = True
-                print(f"Recording started: {out_path}")
-            else:
-                recording = False
-                if writer is not None:
-                    writer.release()
-                    writer = None
-                print("Recording stopped")
+        cv2.imshow("Gesture Meme (Hacky Scaled)", frame)
 
-        # ESC to exit
-        if key == 27:
+        if cv2.waitKey(1) & 0xFF == 27:  # ESC
             break
 
     cap.release()
-    if 'writer' in locals() and writer is not None:
-        writer.release()
     cv2.destroyAllWindows()
 
 
