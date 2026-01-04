@@ -45,7 +45,7 @@ def extract_features(frame, hands, face):
 
     # ---------------- SAME SCALING ----------------
     hand_features = [v * 2.0 for v in hand_features]
-    face_features = [v * 0.3 for v in face_features]
+    face_features = [v * 0.2 for v in face_features]
 
     return hand_features + face_features, h_res, f_res
 
