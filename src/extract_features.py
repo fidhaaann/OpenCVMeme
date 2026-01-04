@@ -40,7 +40,7 @@ def extract_from_frame(frame, hands, face):
     # ---------------- HACKY SCALING ----------------
     # Boost hands, suppress face
     hand_features = [v * 2.0 for v in hand_features]
-    face_features = [v * 0.3 for v in face_features]
+    face_features = [v * 0.2 for v in face_features]
 
     return hand_features + face_features
 
