@@ -7,7 +7,7 @@ from collections import deque, Counter
 model = load("models/gesture_model.joblib")
 
 # ---------------- SMOOTHING ----------------
-PREDICTION_WINDOW = 20
+PREDICTION_WINDOW = 1
 prediction_buffer = deque(maxlen=PREDICTION_WINDOW)
 
 # ---------------- MEDIAPIPE ----------------
