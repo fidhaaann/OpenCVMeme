@@ -16,25 +16,23 @@ def extract_features(frame, hands, face):
     h = hands.process(rgb)
     f = face.process(rgb)
 
-    # ---------- HAND FEATURES ----------
-    hand_feat = []
+    # ---------------- HAND FEATURES ----------------
+    hand_feat = None
     if h.multi_hand_landmarks:
+        hand_feat = []
         for i in range(2):
             if i < len(h.multi_hand_landmarks):
                 for lm in h.multi_hand_landmarks[i].landmark:
                     hand_feat.extend([lm.x, lm.y, lm.z])
             else:
                 hand_feat.extend([0] * 63)
-    else:
-        hand_feat.extend([0] * 126)
 
-    # ---------- FACE FEATURES ----------
-    face_feat = []
+    # ---------------- FACE FEATURES ----------------
+    face_feat = None
     if f.multi_face_landmarks:
+        face_feat = []
         for lm in f.multi_face_landmarks[0].landmark:
             face_feat.extend([lm.x, lm.y, lm.z])
-    else:
-        face_feat.extend([0] * (468 * 3))
 
     return hand_feat, face_feat
 
@@ -56,26 +54,41 @@ def main():
                 for item in os.listdir(folder):
                     path = os.path.join(folder, item)
 
+                    # ---------- PHOTOS ----------
                     if source == "photos":
                         frame = cv2.imread(path)
                         if frame is None:
                             continue
-                        h, f = extract_features(frame, hands, face)
-                        wh.writerow([label] + h)
-                        wf.writerow([label] + f)
 
+                        hand_f, face_f = extract_features(frame, hands, face)
+
+                        # Save HAND data only if hands detected
+                        if hand_f is not None:
+                            wh.writerow([label] + hand_f)
+
+                        # Save FACE data only if face detected
+                        if face_f is not None:
+                            wf.writerow([label] + face_f)
+
+                    # ---------- VIDEOS ----------
                     else:
                         cap = cv2.VideoCapture(path)
                         while True:
                             ret, frame = cap.read()
                             if not ret:
                                 break
-                            h, f = extract_features(frame, hands, face)
-                            wh.writerow([label] + h)
-                            wf.writerow([label] + f)
+
+                            hand_f, face_f = extract_features(frame, hands, face)
+
+                            if hand_f is not None:
+                                wh.writerow([label] + hand_f)
+
+                            if face_f is not None:
+                                wf.writerow([label] + face_f)
+
                         cap.release()
 
-    print("Feature extraction done.")
+    print("Clean dual feature extraction complete.")
 
 
 if __name__ == "__main__":
