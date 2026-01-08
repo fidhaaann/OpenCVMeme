@@ -5,96 +5,79 @@ import mediapipe as mp
 import numpy as np
 
 DATA_DIR = "data"
-OUTPUT_CSV = "data/gestures.csv"
+HAND_CSV = "data/gestures.csv"          # Hand gestures (no speed)
+FACE_CSV = "data/speed_face.csv"        # Face data ONLY for speed
 
 mp_hands = mp.solutions.hands
 mp_face = mp.solutions.face_mesh
 
 
-# ---------- DISTANCE HELPER ----------
 def dist(a, b):
     return np.linalg.norm(np.array(a) - np.array(b))
 
 
-# ---------- SHAPE-BASED HAND FEATURES ----------
+# ---------------- HAND SHAPE FEATURES ----------------
 def hand_shape_features(hand_landmarks):
-    """
-    Convert hand landmarks into shape features:
-    - Distances from wrist to fingertips
-    - Distances between fingertips
-    - Normalized by hand size
-    """
-
     lm = hand_landmarks.landmark
-
-    # Landmark indices
-    WRIST = 0
-    THUMB_TIP = 4
-    INDEX_TIP = 8
-    MIDDLE_TIP = 12
-    RING_TIP = 16
-    PINKY_TIP = 20
+    WRIST, THUMB_TIP, INDEX_TIP, MIDDLE_TIP, RING_TIP, PINKY_TIP = 0, 4, 8, 12, 16, 20
 
     pts = {i: (lm[i].x, lm[i].y, lm[i].z) for i in range(21)}
-
-    # Hand size reference (wrist to middle finger tip)
     hand_size = dist(pts[WRIST], pts[MIDDLE_TIP]) + 1e-6
 
     features = []
 
-    # Distances from wrist to each fingertip
     for tip in [THUMB_TIP, INDEX_TIP, MIDDLE_TIP, RING_TIP, PINKY_TIP]:
         features.append(dist(pts[WRIST], pts[tip]) / hand_size)
 
-    # Distances between fingertips (shape relationships)
-    fingertip_pairs = [
+    for a, b in [
         (THUMB_TIP, INDEX_TIP),
         (INDEX_TIP, MIDDLE_TIP),
         (MIDDLE_TIP, RING_TIP),
         (RING_TIP, PINKY_TIP),
-        (THUMB_TIP, PINKY_TIP)
-    ]
-
-    for a, b in fingertip_pairs:
+        (THUMB_TIP, PINKY_TIP),
+    ]:
         features.append(dist(pts[a], pts[b]) / hand_size)
 
     return features
 
 
-# ---------- FEATURE EXTRACTION ----------
-def extract_features(frame, hands, face):
+# ---------------- FACE FEATURES (RAW LANDMARKS) ----------------
+def face_features(face_landmarks):
+    feats = []
+    for lm in face_landmarks.landmark:
+        feats.extend([lm.x, lm.y, lm.z])
+    return feats
+
+
+# ---------------- FEATURE EXTRACTION ----------------
+def extract_hand(frame, hands):
     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     h = hands.process(rgb)
-    f = face.process(rgb)
 
-    features = []
-
-    # ---------------- HAND FEATURES ----------------
-    # If no hand is detected, SKIP this frame entirely (prevents zero-poisoning)
     if not h.multi_hand_landmarks:
         return None
 
-    # Support 1-hand or 2-hand gestures
+    features = []
     for i in range(2):
         if i < len(h.multi_hand_landmarks):
-            shape_feats = hand_shape_features(h.multi_hand_landmarks[i])
-            features.extend(shape_feats)
+            features.extend(hand_shape_features(h.multi_hand_landmarks[i]))
         else:
-            # Pad if second hand is missing
             features.extend([0] * 10)
-
-    # ---------------- FACE FEATURES ----------------
-    if f.multi_face_landmarks:
-        for lm in f.multi_face_landmarks[0].landmark:
-            features.extend([lm.x, lm.y, lm.z])
-    else:
-        # Pad if face not detected
-        features.extend([0] * (468 * 3))
 
     return features
 
 
-# ---------- MAIN ----------
+def extract_face(frame, face):
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    f = face.process(rgb)
+
+    if not f.multi_face_landmarks:
+        return None
+
+    return face_features(f.multi_face_landmarks[0])
+
+
+# ---------------- MAIN ----------------
 def main():
     hands = mp_hands.Hands(
         max_num_hands=2,
@@ -111,8 +94,9 @@ def main():
 
     os.makedirs("data", exist_ok=True)
 
-    with open(OUTPUT_CSV, "w", newline="") as f:
-        writer = csv.writer(f)
+    with open(HAND_CSV, "w", newline="") as fh, open(FACE_CSV, "w", newline="") as ff:
+        hand_writer = csv.writer(fh)
+        face_writer = csv.writer(ff)
 
         for source in ["photos", "videos"]:
             root = os.path.join(DATA_DIR, source)
@@ -130,9 +114,17 @@ def main():
                         if frame is None:
                             continue
 
-                        feats = extract_features(frame, hands, face)
-                        if feats is not None:
-                            writer.writerow([label] + feats)
+                        # ----- HAND DATA (ALL EXCEPT SPEED) -----
+                        if label != "speed":
+                            feats = extract_hand(frame, hands)
+                            if feats is not None:
+                                hand_writer.writerow([label] + feats)
+
+                        # ----- FACE DATA (ONLY SPEED) -----
+                        if label == "speed":
+                            face_feats = extract_face(frame, face)
+                            if face_feats is not None:
+                                face_writer.writerow([label] + face_feats)
 
                     # ---------- VIDEOS ----------
                     else:
@@ -142,16 +134,21 @@ def main():
                             if not ret:
                                 break
 
-                            feats = extract_features(frame, hands, face)
-                            if feats is not None:
-                                writer.writerow([label] + feats)
+                            if label != "speed":
+                                feats = extract_hand(frame, hands)
+                                if feats is not None:
+                                    hand_writer.writerow([label] + feats)
+
+                            if label == "speed":
+                                face_feats = extract_face(frame, face)
+                                if face_feats is not None:
+                                    face_writer.writerow([label] + face_feats)
 
                         cap.release()
 
     print("✅ Feature extraction complete.")
-    print("👉 Shape-based hand features used.")
-    print("👉 Zero/invalid frames removed.")
-    print(f"📄 Output saved to: {OUTPUT_CSV}")
+    print("👉 Hand gestures saved to:", HAND_CSV)
+    print("👉 Speed facial features saved to:", FACE_CSV)
 
 
 if __name__ == "__main__":
