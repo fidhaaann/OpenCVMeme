@@ -3,10 +3,11 @@ import os
 import csv
 import mediapipe as mp
 import numpy as np
+from collections import defaultdict
 
 DATA_DIR = "data"
-HAND_CSV = "data/gestures.csv"          # Hand gestures (no speed)
-FACE_CSV = "data/speed_face.csv"        # Face data ONLY for speed
+HAND_CSV = "data/gestures.csv"
+FACE_CSV = "data/face_none_speed.csv"
 
 mp_hands = mp.solutions.hands
 mp_face = mp.solutions.face_mesh
@@ -41,15 +42,14 @@ def hand_shape_features(hand_landmarks):
     return features
 
 
-# ---------------- FACE FEATURES (RAW LANDMARKS) ----------------
-def face_features(face_landmarks):
-    feats = []
+# ---------------- FACE POINTS ----------------
+def face_points(face_landmarks):
+    pts = []
     for lm in face_landmarks.landmark:
-        feats.extend([lm.x, lm.y, lm.z])
-    return feats
+        pts.extend([lm.x, lm.y, lm.z])
+    return pts
 
 
-# ---------------- FEATURE EXTRACTION ----------------
 def extract_hand(frame, hands):
     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     h = hands.process(rgb)
@@ -74,25 +74,28 @@ def extract_face(frame, face):
     if not f.multi_face_landmarks:
         return None
 
-    return face_features(f.multi_face_landmarks[0])
+    return face_points(f.multi_face_landmarks[0])
 
 
-# ---------------- MAIN ----------------
 def main():
-    hands = mp_hands.Hands(
-        max_num_hands=2,
+    hands = mp_hands.Hands(max_num_hands=2, min_detection_confidence=0.1, min_tracking_confidence=0.1)
+
+    face_video = mp_face.FaceMesh(
+        static_image_mode=False,
+        max_num_faces=1,
         min_detection_confidence=0.1,
-        min_tracking_confidence=0.1,
-        model_complexity=1
+        min_tracking_confidence=0.1
     )
 
-    face = mp_face.FaceMesh(
+    face_static = mp_face.FaceMesh(
+        static_image_mode=True,
         max_num_faces=1,
-        min_detection_confidence=0.5,
-        min_tracking_confidence=0.5
+        min_detection_confidence=0.1
     )
 
     os.makedirs("data", exist_ok=True)
+
+    face_counts = defaultdict(int)
 
     with open(HAND_CSV, "w", newline="") as fh, open(FACE_CSV, "w", newline="") as ff:
         hand_writer = csv.writer(fh)
@@ -101,54 +104,78 @@ def main():
         for source in ["photos", "videos"]:
             root = os.path.join(DATA_DIR, source)
             for label in os.listdir(root):
+                norm_label = label.strip().lower()
                 folder = os.path.join(root, label)
                 if not os.path.isdir(folder):
                     continue
 
+                print(f"\n📁 Scanning {source}/{label}")
+
                 for item in os.listdir(folder):
                     path = os.path.join(folder, item)
 
-                    # ---------- PHOTOS ----------
                     if source == "photos":
                         frame = cv2.imread(path)
                         if frame is None:
                             continue
 
-                        # ----- HAND DATA (ALL EXCEPT SPEED) -----
-                        if label != "speed":
-                            feats = extract_hand(frame, hands)
-                            if feats is not None:
-                                hand_writer.writerow([label] + feats)
+                        # HAND
+                        hand_feats = extract_hand(frame, hands)
+                        if hand_feats is not None:
+                            hand_writer.writerow([norm_label] + hand_feats)
 
-                        # ----- FACE DATA (ONLY SPEED) -----
-                        if label == "speed":
-                            face_feats = extract_face(frame, face)
-                            if face_feats is not None:
-                                face_writer.writerow([label] + face_feats)
+                        # FACE
+                        face_feats = extract_face(frame, face_static)
+                        if face_feats is not None:
+                            face_label = "speed" if norm_label == "speed" else "none"
+                            face_writer.writerow([face_label] + face_feats)
+                            face_counts[face_label] += 1
+                        else:
+                            # ⚠ If face NOT detected, still record NEUTRAL baseline
+                            if norm_label != "speed":
+                                zero_face = [0.0] * 1404
+                                face_writer.writerow(["none"] + zero_face)
+                                face_counts["none"] += 1
 
-                    # ---------- VIDEOS ----------
-                    else:
+                    else:  # VIDEOS
                         cap = cv2.VideoCapture(path)
+                        frame_id = 0
+
                         while True:
                             ret, frame = cap.read()
                             if not ret:
                                 break
 
-                            if label != "speed":
-                                feats = extract_hand(frame, hands)
-                                if feats is not None:
-                                    hand_writer.writerow([label] + feats)
+                            frame_id += 1
+                            if frame_id % 3 != 0:
+                                continue
 
-                            if label == "speed":
-                                face_feats = extract_face(frame, face)
-                                if face_feats is not None:
-                                    face_writer.writerow([label] + face_feats)
+                            # HAND
+                            hand_feats = extract_hand(frame, hands)
+                            if hand_feats is not None:
+                                hand_writer.writerow([norm_label] + hand_feats)
+
+                            # FACE
+                            face_feats = extract_face(frame, face_video)
+                            if face_feats is not None:
+                                face_label = "speed" if norm_label == "speed" else "none"
+                                face_writer.writerow([face_label] + face_feats)
+                                face_counts[face_label] += 1
+                            else:
+                                if norm_label != "speed":
+                                    zero_face = [0.0] * 1404
+                                    face_writer.writerow(["none"] + zero_face)
+                                    face_counts["none"] += 1
 
                         cap.release()
 
-    print("✅ Feature extraction complete.")
-    print("👉 Hand gestures saved to:", HAND_CSV)
-    print("👉 Speed facial features saved to:", FACE_CSV)
+    print("\n✅ Feature extraction complete")
+    print("Hand data →", HAND_CSV)
+    print("Face data →", FACE_CSV)
+
+    print("\n📊 Face samples written:")
+    for k, v in face_counts.items():
+        print(f"  {k} : {v}")
 
 
 if __name__ == "__main__":
