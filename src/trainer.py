@@ -1,155 +1,102 @@
-import cv2
-import os
-import csv
-import mediapipe as mp
+import pandas as pd
 import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
+from joblib import dump
+import os
+import random
 
-DATA_DIR = "data"
-HAND_CSV = "data/gestures.csv"          # Hand gestures (no speed)
-FACE_CSV = "data/speed_face.csv"        # Face data ONLY for speed
+HAND_DATA_PATH = "data/gestures.csv"
+FACE_DATA_PATH = "data/face_none_speed.csv"
 
-mp_hands = mp.solutions.hands
-mp_face = mp.solutions.face_mesh
+HAND_MODEL_PATH = "models/hand_gesture_model.joblib"
+FACE_REF_PATH = "models/face_none_speed_ref.npz"
 
+os.makedirs("models", exist_ok=True)
 
-def dist(a, b):
-    return np.linalg.norm(np.array(a) - np.array(b))
+# =========================================================
+# 1️⃣ HAND MODEL (UNCHANGED)
+# =========================================================
+print("\n=== Training Hand Gesture Model ===")
 
+hand_df = pd.read_csv(HAND_DATA_PATH, header=None)
+X_hand = hand_df.iloc[:, 1:]
+y_hand = hand_df.iloc[:, 0]
 
-# ---------------- HAND SHAPE FEATURES ----------------
-def hand_shape_features(hand_landmarks):
-    lm = hand_landmarks.landmark
-    WRIST, THUMB_TIP, INDEX_TIP, MIDDLE_TIP, RING_TIP, PINKY_TIP = 0, 4, 8, 12, 16, 20
+Xh_train, Xh_test, yh_train, yh_test = train_test_split(
+    X_hand, y_hand, test_size=0.2, random_state=42, stratify=y_hand
+)
 
-    pts = {i: (lm[i].x, lm[i].y, lm[i].z) for i in range(21)}
-    hand_size = dist(pts[WRIST], pts[MIDDLE_TIP]) + 1e-6
+hand_model = RandomForestClassifier(n_estimators=500, class_weight="balanced", random_state=42)
+hand_model.fit(Xh_train, yh_train)
 
-    features = []
+yh_pred = hand_model.predict(Xh_test)
+hand_acc = accuracy_score(yh_test, yh_pred)
 
-    for tip in [THUMB_TIP, INDEX_TIP, MIDDLE_TIP, RING_TIP, PINKY_TIP]:
-        features.append(dist(pts[WRIST], pts[tip]) / hand_size)
+dump(hand_model, HAND_MODEL_PATH)
 
-    for a, b in [
-        (THUMB_TIP, INDEX_TIP),
-        (INDEX_TIP, MIDDLE_TIP),
-        (MIDDLE_TIP, RING_TIP),
-        (RING_TIP, PINKY_TIP),
-        (THUMB_TIP, PINKY_TIP),
-    ]:
-        features.append(dist(pts[a], pts[b]) / hand_size)
+print("✅ Hand model trained")
+print(f"📊 Hand accuracy: {hand_acc * 100:.2f}%")
+print(f"💾 Saved → {HAND_MODEL_PATH}")
 
-    return features
+# =========================================================
+# 2️⃣ FACE: NONE vs SPEED (BALANCED + NORMALIZED)
+# =========================================================
+print("\n=== Building Face None vs Speed Reference ===")
 
+face_df = pd.read_csv(FACE_DATA_PATH, header=None)
+X_face = face_df.iloc[:, 1:].values
+y_face = face_df.iloc[:, 0].values
 
-# ---------------- FACE FEATURES (RAW LANDMARKS) ----------------
-def face_features(face_landmarks):
-    feats = []
-    for lm in face_landmarks.landmark:
-        feats.extend([lm.x, lm.y, lm.z])
-    return feats
+none_faces = X_face[y_face == "none"]
+speed_faces = X_face[y_face == "speed"]
 
+print(f"Raw None samples  : {len(none_faces)}")
+print(f"Raw Speed samples : {len(speed_faces)}")
 
-# ---------------- FEATURE EXTRACTION ----------------
-def extract_hand(frame, hands):
-    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    h = hands.process(rgb)
+if len(speed_faces) < 5:
+    print("❌ Not enough SPEED face samples. Add more speed photos/videos.")
+    exit()
 
-    if not h.multi_hand_landmarks:
-        return None
+# ---------- BALANCE DATA ----------
+sample_size = len(speed_faces)
+none_sampled = random.sample(list(none_faces), sample_size)
 
-    features = []
-    for i in range(2):
-        if i < len(h.multi_hand_landmarks):
-            features.extend(hand_shape_features(h.multi_hand_landmarks[i]))
-        else:
-            features.extend([0] * 10)
+none_faces = np.array(none_sampled)
+speed_faces = np.array(speed_faces)
 
-    return features
+print(f"Balanced None samples  : {len(none_faces)}")
+print(f"Balanced Speed samples : {len(speed_faces)}")
 
+# ---------- NORMALIZE ----------
+def normalize(v):
+    norm = np.linalg.norm(v)
+    return v / norm if norm != 0 else v
 
-def extract_face(frame, face):
-    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    f = face.process(rgb)
+none_faces = np.array([normalize(v) for v in none_faces])
+speed_faces = np.array([normalize(v) for v in speed_faces])
 
-    if not f.multi_face_landmarks:
-        return None
+# ---------- BUILD REFERENCE ----------
+none_mean = np.mean(none_faces, axis=0)
+speed_mean = np.mean(speed_faces, axis=0)
 
-    return face_features(f.multi_face_landmarks[0])
+# ---------- EVALUATION ----------
+def classify(vec):
+    vec = normalize(vec)
+    d_none = np.linalg.norm(vec - none_mean)
+    d_speed = np.linalg.norm(vec - speed_mean)
+    return "speed" if d_speed < 0.85 * d_none else "none"
 
+preds = [classify(x) for x in np.vstack([none_faces, speed_faces])]
+true = ["none"] * len(none_faces) + ["speed"] * len(speed_faces)
 
-# ---------------- MAIN ----------------
-def main():
-    hands = mp_hands.Hands(
-        max_num_hands=2,
-        min_detection_confidence=0.1,
-        min_tracking_confidence=0.1,
-        model_complexity=1
-    )
+face_acc = accuracy_score(true, preds)
 
-    face = mp_face.FaceMesh(
-        max_num_faces=1,
-        min_detection_confidence=0.5,
-        min_tracking_confidence=0.5
-    )
+np.savez(FACE_REF_PATH, none_mean=none_mean, speed_mean=speed_mean)
 
-    os.makedirs("data", exist_ok=True)
+print("✅ Face reference model built")
+print(f"📊 Face none vs speed accuracy: {face_acc * 100:.2f}%")
+print(f"💾 Saved → {FACE_REF_PATH}")
 
-    with open(HAND_CSV, "w", newline="") as fh, open(FACE_CSV, "w", newline="") as ff:
-        hand_writer = csv.writer(fh)
-        face_writer = csv.writer(ff)
-
-        for source in ["photos", "videos"]:
-            root = os.path.join(DATA_DIR, source)
-            for label in os.listdir(root):
-                folder = os.path.join(root, label)
-                if not os.path.isdir(folder):
-                    continue
-
-                for item in os.listdir(folder):
-                    path = os.path.join(folder, item)
-
-                    # ---------- PHOTOS ----------
-                    if source == "photos":
-                        frame = cv2.imread(path)
-                        if frame is None:
-                            continue
-
-                        # ----- HAND DATA (ALL EXCEPT SPEED) -----
-                        if label != "speed":
-                            feats = extract_hand(frame, hands)
-                            if feats is not None:
-                                hand_writer.writerow([label] + feats)
-
-                        # ----- FACE DATA (ONLY SPEED) -----
-                        if label == "speed":
-                            face_feats = extract_face(frame, face)
-                            if face_feats is not None:
-                                face_writer.writerow([label] + face_feats)
-
-                    # ---------- VIDEOS ----------
-                    else:
-                        cap = cv2.VideoCapture(path)
-                        while True:
-                            ret, frame = cap.read()
-                            if not ret:
-                                break
-
-                            if label != "speed":
-                                feats = extract_hand(frame, hands)
-                                if feats is not None:
-                                    hand_writer.writerow([label] + feats)
-
-                            if label == "speed":
-                                face_feats = extract_face(frame, face)
-                                if face_feats is not None:
-                                    face_writer.writerow([label] + face_feats)
-
-                        cap.release()
-
-    print("✅ Feature extraction complete.")
-    print("👉 Hand gestures saved to:", HAND_CSV)
-    print("👉 Speed facial features saved to:", FACE_CSV)
-
-
-if __name__ == "__main__":
-    main()
+print("\n🎉 Training complete.")
