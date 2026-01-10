@@ -59,7 +59,7 @@ def main():
     print("\nControls:")
     print(" R → Start recording")
     print(" S → Stop recording")
-    print(" P → Take photo (3 sec timer)")
+    print(" P → Take photo (instant)")
     print(" Q → Quit")
 
     recording = False
@@ -105,43 +105,10 @@ def main():
 
         # ---- PHOTO WITH REAL TIMER (FIXED) ----
         elif key == ord('p'):
-            final_frame = None
-            start_time = time.time()
-
-            while True:
-                ret, frame = cap.read()
-                if not ret:
-                    break
-
-                frame = cv2.flip(frame, 1)
-                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-
-                draw_landmarks(frame, rgb, hands, face)
-
-                remaining = 3 - int(time.time() - start_time)
-                if remaining <= 0:
-                    final_frame = frame.copy()
-                    break
-
-                cv2.putText(frame, f"Photo in {remaining}",
-                            (20, 120),
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            1.0,
-                            (0, 0, 255),
-                            3)
-
-                cv2.putText(frame, f"Gesture: {gesture}", (20, 40),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.8,
-                            (0, 255, 0), 2)
-
-                cv2.imshow("Gesture Recorder", frame)
-                cv2.waitKey(1)
-
-            if final_frame is not None:
-                filename = f"{gesture}_{int(time.time())}.jpg"
-                filepath = os.path.join(photo_path, filename)
-                cv2.imwrite(filepath, final_frame)
-                print(f"Photo saved: {filepath}")
+            filename = f"{gesture}_{int(time.time())}.jpg"
+            filepath = os.path.join(photo_path, filename)
+            cv2.imwrite(filepath, frame)
+            print(f"Photo saved: {filepath}")
 
         # ---- EXIT ----
         elif key == ord('q'):
