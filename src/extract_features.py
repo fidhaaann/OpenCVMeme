@@ -1,182 +1,121 @@
 import cv2
-import os
-import csv
 import mediapipe as mp
 import numpy as np
-from collections import defaultdict
+import os
+import csv
 
 DATA_DIR = "data"
-HAND_CSV = "data/gestures.csv"
-FACE_CSV = "data/face_none_speed.csv"
+OUT_CSV = "data/gestures.csv"
 
 mp_hands = mp.solutions.hands
 mp_face = mp.solutions.face_mesh
 
+hands = mp_hands.Hands(static_image_mode=True, max_num_hands=2)
+face = mp_face.FaceMesh(static_image_mode=True)
 
-def dist(a, b):
-    return np.linalg.norm(np.array(a) - np.array(b))
-
-
-# ---------------- HAND SHAPE FEATURES ----------------
-def hand_shape_features(hand_landmarks):
+# ---------- HAND FEATURES (20) ----------
+def extract_hand_features(hand_landmarks):
     lm = hand_landmarks.landmark
-    WRIST, THUMB_TIP, INDEX_TIP, MIDDLE_TIP, RING_TIP, PINKY_TIP = 0, 4, 8, 12, 16, 20
+    WRIST = 0
+    BASE = 9
+    TIPS = [4, 8, 12, 16, 20]
 
-    pts = {i: (lm[i].x, lm[i].y, lm[i].z) for i in range(21)}
-    hand_size = dist(pts[WRIST], pts[MIDDLE_TIP]) + 1e-6
+    pts = {i: np.array([lm[i].x, lm[i].y, lm[i].z]) for i in range(21)}
+    size = np.linalg.norm(pts[WRIST] - pts[BASE]) + 1e-6
+    feats = []
 
-    features = []
+    # distances wrist → fingertips
+    for tip in TIPS:
+        feats.append(np.linalg.norm(pts[WRIST] - pts[tip]) / size)
 
-    for tip in [THUMB_TIP, INDEX_TIP, MIDDLE_TIP, RING_TIP, PINKY_TIP]:
-        features.append(dist(pts[WRIST], pts[tip]) / hand_size)
+    # fingertip-to-fingertip distances
+    for a, b in [(4,8),(8,12),(12,16),(16,20),(4,20)]:
+        feats.append(np.linalg.norm(pts[a] - pts[b]) / size)
 
-    for a, b in [
-        (THUMB_TIP, INDEX_TIP),
-        (INDEX_TIP, MIDDLE_TIP),
-        (MIDDLE_TIP, RING_TIP),
-        (RING_TIP, PINKY_TIP),
-        (THUMB_TIP, PINKY_TIP),
-    ]:
-        features.append(dist(pts[a], pts[b]) / hand_size)
+    # angular relationships
+    for a, b in [(4,8),(8,12),(12,16),(16,20),(4,20)]:
+        va = pts[a] - pts[WRIST]
+        vb = pts[b] - pts[WRIST]
+        cos = np.dot(va, vb)/(np.linalg.norm(va)*np.linalg.norm(vb)+1e-6)
+        feats.append(cos)
 
-    return features
+    while len(feats) < 20:
+        feats.append(0.0)
 
+    return feats
 
-# ---------------- FACE POINTS ----------------
-def face_points(face_landmarks):
-    pts = []
-    for lm in face_landmarks.landmark:
-        pts.extend([lm.x, lm.y, lm.z])
-    return pts
+# ---------- FACE FEATURES (4096) ----------
+def extract_face_features(frame):
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    h, w = gray.shape
+    cx, cy = w//2, h//2
+    size = min(w, h)//2
 
+    crop = gray[cy-size//2:cy+size//2, cx-size//2:cx+size//2]
+    crop = cv2.resize(crop, (64,64))
+    crop = crop.astype("float32") / 255.0
+    return crop.flatten().tolist()
 
-def extract_hand(frame, hands):
-    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    h = hands.process(rgb)
+# ---------- PROCESS IMAGE ----------
+def process_image(path, label, writer):
+    img = cv2.imread(path)
+    if img is None:
+        return
 
-    if not h.multi_hand_landmarks:
-        return None
+    rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    hand_res = hands.process(rgb)
 
-    features = []
-    for i in range(2):
-        if i < len(h.multi_hand_landmarks):
-            features.extend(hand_shape_features(h.multi_hand_landmarks[i]))
-        else:
-            features.extend([0] * 10)
+    hand_feats = [0]*20
+    if hand_res.multi_hand_landmarks:
+        hand_feats = extract_hand_features(hand_res.multi_hand_landmarks[0])
 
-    return features
+    face_feats = extract_face_features(img)
+    writer.writerow(hand_feats + face_feats + [label])
 
+# ---------- PROCESS VIDEO ----------
+def process_video(path, label, writer):
+    cap = cv2.VideoCapture(path)
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
 
-def extract_face(frame, face):
-    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    f = face.process(rgb)
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        hand_res = hands.process(rgb)
 
-    if not f.multi_face_landmarks:
-        return None
+        hand_feats = [0]*20
+        if hand_res.multi_hand_landmarks:
+            hand_feats = extract_hand_features(hand_res.multi_hand_landmarks[0])
 
-    return face_points(f.multi_face_landmarks[0])
+        face_feats = extract_face_features(frame)
+        writer.writerow(hand_feats + face_feats + [label])
 
+    cap.release()
 
+# ---------- MAIN ----------
 def main():
-    hands = mp_hands.Hands(max_num_hands=2, min_detection_confidence=0.1, min_tracking_confidence=0.1)
-
-    face_video = mp_face.FaceMesh(
-        static_image_mode=False,
-        max_num_faces=1,
-        min_detection_confidence=0.1,
-        min_tracking_confidence=0.1
-    )
-
-    face_static = mp_face.FaceMesh(
-        static_image_mode=True,
-        max_num_faces=1,
-        min_detection_confidence=0.1
-    )
-
     os.makedirs("data", exist_ok=True)
+    with open(OUT_CSV, "w", newline="") as f:
+        writer = csv.writer(f)
+        header = [f"h{i}" for i in range(20)] + [f"f{i}" for i in range(4096)] + ["label"]
+        writer.writerow(header)
 
-    face_counts = defaultdict(int)
-
-    with open(HAND_CSV, "w", newline="") as fh, open(FACE_CSV, "w", newline="") as ff:
-        hand_writer = csv.writer(fh)
-        face_writer = csv.writer(ff)
-
-        for source in ["photos", "videos"]:
-            root = os.path.join(DATA_DIR, source)
-            for label in os.listdir(root):
-                norm_label = label.strip().lower()
-                folder = os.path.join(root, label)
+        for src in ["photos", "videos"]:
+            base = os.path.join(DATA_DIR, src)
+            for label in os.listdir(base):
+                folder = os.path.join(base, label)
                 if not os.path.isdir(folder):
                     continue
 
-                print(f"\n📁 Scanning {source}/{label}")
+                print(f"📂 {src}/{label}")
+                for file in os.listdir(folder):
+                    path = os.path.join(folder, file)
+                    if file.endswith((".jpg", ".png")):
+                        process_image(path, label, writer)
+                    elif file.endswith(".mp4"):
+                        process_video(path, label, writer)
 
-                for item in os.listdir(folder):
-                    path = os.path.join(folder, item)
-
-                    if source == "photos":
-                        frame = cv2.imread(path)
-                        if frame is None:
-                            continue
-
-                        # HAND
-                        hand_feats = extract_hand(frame, hands)
-                        if hand_feats is not None:
-                            hand_writer.writerow([norm_label] + hand_feats)
-
-                        # FACE
-                        face_feats = extract_face(frame, face_static)
-                        if face_feats is not None:
-                            face_label = "speed" if norm_label == "speed" else "none"
-                            face_writer.writerow([face_label] + face_feats)
-                            face_counts[face_label] += 1
-                        else:
-                            # ⚠ If face NOT detected, still record NEUTRAL baseline
-                            if norm_label != "speed":
-                                zero_face = [0.0] * 1404
-                                face_writer.writerow(["none"] + zero_face)
-                                face_counts["none"] += 1
-
-                    else:  # VIDEOS
-                        cap = cv2.VideoCapture(path)
-                        frame_id = 0
-
-                        while True:
-                            ret, frame = cap.read()
-                            if not ret:
-                                break
-
-                            frame_id += 1
-                            if frame_id % 3 != 0:
-                                continue
-
-                            # HAND
-                            hand_feats = extract_hand(frame, hands)
-                            if hand_feats is not None:
-                                hand_writer.writerow([norm_label] + hand_feats)
-
-                            # FACE
-                            face_feats = extract_face(frame, face_video)
-                            if face_feats is not None:
-                                face_label = "speed" if norm_label == "speed" else "none"
-                                face_writer.writerow([face_label] + face_feats)
-                                face_counts[face_label] += 1
-                            else:
-                                if norm_label != "speed":
-                                    zero_face = [0.0] * 1404
-                                    face_writer.writerow(["none"] + zero_face)
-                                    face_counts["none"] += 1
-
-                        cap.release()
-
-    print("\n✅ Feature extraction complete")
-    print("Hand data →", HAND_CSV)
-    print("Face data →", FACE_CSV)
-
-    print("\n📊 Face samples written:")
-    for k, v in face_counts.items():
-        print(f"  {k} : {v}")
-
+    print("✅ Feature extraction complete → data/gestures.csv")
 
 if __name__ == "__main__":
     main()
