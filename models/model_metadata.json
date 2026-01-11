@@ -1,0 +1,30 @@
+{
+  "model_name": "gradientboosting",
+  "trained_at": "2026-01-11T12:44:43.074474",
+  "classes": [
+    "cooked",
+    "dicaprio",
+    "none",
+    "speed",
+    "think",
+    "vanish"
+  ],
+  "feature_dim": 514,
+  "train_samples": 1328,
+  "test_samples": 333,
+  "best_model_type": "GradientBoosting",
+  "all_results": {
+    "SVM": {
+      "accuracy": 0.9459459459459459,
+      "f1": 0.9457522195200555
+    },
+    "GradientBoosting": {
+      "accuracy": 0.963963963963964,
+      "f1": 0.9637395295006699
+    },
+    "RandomForest": {
+      "accuracy": 0.9459459459459459,
+      "f1": 0.9460059808584079
+    }
+  }
+}
