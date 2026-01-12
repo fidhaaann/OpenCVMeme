@@ -12,3 +12,10 @@ pandas>=2.0.0
 
 # Optional: For imageio GIF support
 imageio[ffmpeg]
+
+# API Server (React frontend backend)
+flask>=3.0.0
+flask-cors>=4.0.0
+flask-socketio>=5.3.0
+python-socketio>=5.10.0
+eventlet>=0.35.0
