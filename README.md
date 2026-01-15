@@ -1,6 +1,12 @@
 # OpenCVMeme 🎭
 
-A production-ready Python system for recognizing 6 specific memes based on high-precision facial expressions and dual-hand gestures using OpenCV + MediaPipe Holistic.
+A production-ready real-time AI-powered gesture recognition system that detects your face and hand gestures to display matching memes. Built with Next.js, FastAPI, and MediaPipe.
+
+## 🎨 Color Scheme
+- **Primary Black**: `#000000`
+- **Primary Purple**: `#9929EA`
+- **Accent Pink**: `#FF5FCF`
+- **Accent Yellow**: `#FAEB92`
 
 ## 🎯 Features
 
@@ -8,7 +14,37 @@ A production-ready Python system for recognizing 6 specific memes based on high-
 - **Movement-invariant features** using relative landmark mapping
 - **High-confidence classification** (≥0.85 threshold)
 - **GIF overlay** on recognized gestures
+- **Modern Web Interface** with Next.js + Tailwind CSS
+- **Real-time WebSocket** streaming for low-latency detection
 - **6 Meme Classes**: cooked, dicaprio, speed, think, vanish, none
+
+## 🏗️ Project Structure
+
+```
+OpenCVMeme/
+├── backend/                 # FastAPI Backend
+│   ├── main.py             # API server with WebSocket support
+│   └── requirements.txt    # Python dependencies
+│
+├── frontend/               # Next.js Frontend
+│   ├── app/
+│   │   ├── globals.css     # Global styles + Tailwind
+│   │   ├── layout.tsx      # Root layout
+│   │   └── page.tsx        # Main application page
+│   ├── package.json        # Node.js dependencies
+│   ├── tailwind.config.ts  # Tailwind configuration
+│   └── .env.local          # Environment variables
+│
+├── src/                    # Core ML Components
+│   ├── meme_detector.py    # Standalone detector
+│   ├── holistic_features.py # MediaPipe feature extraction
+│   └── gif_overlay.py      # GIF/image overlay utilities
+│
+├── models/                 # Trained ML models
+│   └── meme_classifier.joblib
+│
+└── gifs/                   # Meme images/GIFs
+```
 
 ## 📦 Installation
 
@@ -26,7 +62,67 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-## 🚀 Quick Start
+## 🚀 Quick Start - Web App
+
+### 1. Start the Backend (FastAPI)
+
+```bash
+# Navigate to backend directory
+cd backend
+
+# Install dependencies (if not already)
+pip install -r requirements.txt
+
+# Start the FastAPI server
+python main.py
+```
+
+The API server will start at:
+- **API**: `http://localhost:8000`
+- **Docs**: `http://localhost:8000/docs`
+- **WebSocket**: `ws://localhost:8000/ws`
+
+### 2. Start the Frontend (Next.js)
+
+```bash
+# Open a new terminal and navigate to frontend
+cd frontend
+
+# Install dependencies
+npm install
+
+# Start development server
+npm run dev
+```
+
+The frontend will start at `http://localhost:3000`
+
+### 3. Use the Web App
+
+1. Open your browser to `http://localhost:3000`
+2. Click **"Start Detection"**
+3. Allow camera permissions
+4. Make gestures and watch the memes appear!
+
+---
+
+## 🎬 Standalone Mode (No Web)
+
+### Run Real-Time Detection (Desktop)
+
+```bash
+python src/meme_detector.py
+```
+
+**Options:**
+- `--threshold 0.85`: Set confidence threshold
+- `--camera 0`: Select camera device
+- `--no-landmarks`: Hide landmark drawings
+- `--video path/to/video.mp4`: Process video file
+
+---
+
+## 🧠 Training Your Own Model
 
 ### 1. Collect Training Data
 
@@ -52,18 +148,6 @@ python src/train_meme_model.py
 - `--model gb`: Train Gradient Boosting only
 - `--no-tune`: Skip hyperparameter tuning
 
-### 3. Run Real-Time Detection
-
-```bash
-python src/meme_detector.py
-```
-
-**Options:**
-- `--threshold 0.85`: Set confidence threshold
-- `--camera 0`: Select camera device
-- `--no-landmarks`: Hide landmark drawings
-- `--video path/to/video.mp4`: Process video file
-
 ## 🎬 Meme Classes
 
 | Key | Class | Gesture Description |
@@ -75,17 +159,69 @@ python src/meme_detector.py
 | 5 | `vanish` | Peace sign / disappearing gesture |
 | 6 | `none` | Neutral / no specific gesture |
 
-## 📁 Project Structure
+## � API Endpoints
+
+### REST API
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/` | GET | Health check |
+| `/health` | GET | Detailed health status |
+| `/detect` | POST | Single frame detection |
+| `/gif/{filename}` | GET | Serve meme images |
+| `/gifs` | GET | List available memes |
+
+### WebSocket
+
+- **Endpoint**: `ws://localhost:8000/ws`
+- **Protocol**: Send JSON `{ "image": "base64_data" }`, receive prediction results
+
+## 🎨 UI Features
+
+- **Modern Design**: Dark theme with gradient accents
+- **Smooth Animations**: Framer Motion powered transitions
+- **Real-time Feedback**: Live FPS counter, detection indicators
+- **Responsive Layout**: Works on desktop and tablet
+- **Glass Morphism**: Frosted glass effects
+- **Glow Effects**: Dynamic hover and active states
+
+## 🛠️ Tech Stack
+
+### Frontend
+- **Next.js 14** - React framework
+- **TypeScript** - Type safety
+- **Tailwind CSS** - Utility-first styling
+- **Framer Motion** - Animations
+- **Lucide React** - Icons
+
+### Backend
+- **FastAPI** - High-performance API
+- **WebSockets** - Real-time communication
+- **MediaPipe** - Face & hand detection
+- **scikit-learn** - ML classification
+- **OpenCV** - Image processing
+
+## 📁 Full Project Structure
 
 ```
 OpenCVMeme/
+├── backend/                   # FastAPI Backend
+│   ├── main.py               # WebSocket API server
+│   └── requirements.txt      # Python dependencies
+├── frontend/                  # Next.js Frontend
+│   ├── app/
+│   │   ├── globals.css       # Tailwind + custom styles
+│   │   ├── layout.tsx        # Root layout
+│   │   └── page.tsx          # Main app component
+│   ├── package.json          # Node dependencies
+│   ├── tailwind.config.ts    # Tailwind config
+│   └── .env.local            # Environment variables
 ├── src/
 │   ├── holistic_features.py   # Feature extraction (MediaPipe Holistic)
 │   ├── data_collector.py      # Dataset collection tool
 │   ├── train_meme_model.py    # Model training script
 │   ├── meme_detector.py       # Real-time inference
 │   ├── gif_overlay.py         # GIF rendering utilities
-│   ├── extract_features.py    # Feature extraction wrapper
 │   └── utils.py               # Helper functions
 ├── data/
 │   ├── meme_features.csv      # Training dataset (generated)
@@ -177,6 +313,16 @@ python src/meme_detector.py --video input.mp4 --output output.mp4
 ```
 
 ## 🛠️ Troubleshooting
+
+### Camera not working
+- Check browser permissions for camera access
+- Ensure no other application is using the camera
+- Try a different browser (Chrome recommended)
+
+### WebSocket connection failed
+- Verify the backend is running on port 8000
+- Check for firewall/antivirus blocking connections
+- Ensure CORS is properly configured
 
 ### Low Detection Confidence
 - Ensure good lighting
