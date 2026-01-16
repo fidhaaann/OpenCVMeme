@@ -49,9 +49,19 @@ DEFAULT_GIF_MAPPING = {
 }
 
 # Detection settings
-CONFIDENCE_THRESHOLD = 0.85
-SMOOTHING_FRAMES = 3  # Number of frames to smooth predictions (reduced for faster response)
-MIN_DETECTION_DURATION = 0.1  # Minimum seconds to trigger overlay (faster)
+CONFIDENCE_THRESHOLD = 0.50  # Universal threshold for all classes
+SMOOTHING_FRAMES = 3  # Reduced for faster response
+MIN_DETECTION_DURATION = 0.15  # Faster trigger
+
+# Class-specific confidence thresholds (all equal for balanced detection)
+CLASS_THRESHOLDS = {
+    "speed": 0.50,
+    "none": 0.30,
+    "cooked": 0.50,
+    "vanish": 0.50,
+    "dicaprio": 0.50,
+    "think": 0.50,
+}
 
 # Display settings
 GIF_SIZE = (180, 180)
@@ -85,6 +95,13 @@ class MemeDetector:
         self.model = load(model_path)
         self.classes = list(self.model.classes_)
         print(f"   Classes: {self.classes}")
+
+        # Check for class mismatch
+        expected_classes = ["cooked", "dicaprio", "none", "speed", "think", "vanish"]
+        if set(self.classes) != set(expected_classes):
+            print(f"⚠️ WARNING: Model classes {self.classes} do not match expected {expected_classes}")
+        else:
+            print("✅ Model classes match expected labels.")
         
         # Load metadata if available
         if os.path.exists(METADATA_PATH):
@@ -120,6 +137,8 @@ class MemeDetector:
         # Performance metrics
         self.fps_history = []
         self.process_times = []
+
+    # ...existing code...
     
     def _load_gifs(self, mapping):
         """Load GIFs from mapping."""
@@ -264,31 +283,21 @@ class MemeDetector:
         Returns:
             tuple: (predicted_class, confidence)
         """
-        features = features.reshape(1, -1)
-        
+        import numpy as np
+        features = np.array(features)
         # Handle NaN/Inf
         features = np.nan_to_num(features, nan=0.0, posinf=1e10, neginf=-1e10)
-        
-        # Ensure feature dimension matches model expectation (pad or truncate)
-        expected_features = 514  # Model was trained with this dimension
-        current_features = features.shape[1]
-        
-        if current_features < expected_features:
-            # Pad with zeros
-            padding = np.zeros((1, expected_features - current_features))
-            features = np.hstack([features, padding])
-        elif current_features > expected_features:
-            # Truncate
-            features = features[:, :expected_features]
-        
+        expected = 514
+        if features.shape[-1] < expected:
+            features = np.concatenate([features, np.zeros(expected - features.shape[-1])])
+        elif features.shape[-1] > expected:
+            features = features[:expected]
+        features = features.reshape(1, -1)
         # Get probabilities
         probs = self.model.predict_proba(features)[0]
-        
-        # Get best prediction
         idx = np.argmax(probs)
         prediction = self.classes[idx]
         confidence = probs[idx]
-        
         return prediction, confidence
     
     def process_frame(self, frame, current_time):
@@ -307,20 +316,31 @@ class MemeDetector:
         # Convert and extract features
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         features, results = self.extractor.extract_enhanced_features_from_frame(rgb)
+        # ...existing code...
         detection_status = self.extractor.get_detection_status(results)
         
         # Draw landmarks
         if SHOW_LANDMARKS:
             frame = self._draw_landmarks(frame, results)
         
-        # Make prediction
-        prediction, confidence = self.predict(features)
+        # Check if at least one hand is detected - required for gesture recognition
+        has_hands = detection_status['left_hand'] or detection_status['right_hand']
+        
+        # Make prediction only if hands are detected
+        if has_hands:
+            prediction, confidence = self.predict(features)
+        else:
+            # No hands = default to "none"
+            prediction, confidence = "none", 0.0
         
         # Apply smoothing
         smoothed_pred, smoothed_conf = self._smooth_prediction(prediction, confidence)
         
-        # Update gesture state
-        if smoothed_conf >= CONFIDENCE_THRESHOLD and smoothed_pred != "none":
+        # Get class-specific threshold
+        class_threshold = CLASS_THRESHOLDS.get(smoothed_pred, CONFIDENCE_THRESHOLD)
+        
+        # Update gesture state - use class-specific threshold
+        if smoothed_conf >= class_threshold and smoothed_pred != "none":
             if smoothed_pred != self.current_gesture:
                 self.gesture_start_time = current_time
                 self.current_gesture = smoothed_pred
@@ -346,8 +366,8 @@ class MemeDetector:
         avg_time = np.mean(self.process_times)
         fps = 1.0 / max(avg_time, 0.001)
         
-        # Draw UI
-        display_gesture = self.current_gesture if smoothed_conf >= CONFIDENCE_THRESHOLD else "none"
+        # Draw UI - show gesture if it meets its class threshold
+        display_gesture = self.current_gesture if smoothed_conf >= class_threshold else "none"
         frame = self._draw_ui(frame, display_gesture, smoothed_conf, fps, detection_status)
         
         return frame
