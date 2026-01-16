@@ -36,8 +36,9 @@ const GESTURE_HINTS = [
   { name: 'Speed', emoji: '💨', description: 'Fast movement' },
 ]
 
-// API Configuration - connects to Flask app.py
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'
+// API Configuration
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000/ws'
 
 export default function Home() {
   // State
@@ -50,13 +51,13 @@ export default function Home() {
   // Refs
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const wsRef = useRef<WebSocket | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const frameIdRef = useRef<number>(0)
   const lastTimeRef = useRef<number>(Date.now())
   const fpsCountRef = useRef<number>(0)
-  const isProcessingRef = useRef<boolean>(false)
 
-  // Start camera and HTTP polling (same as original app.py)
+  // Start camera and WebSocket
   const startStream = useCallback(async () => {
     try {
       setError(null)
@@ -78,9 +79,41 @@ export default function Home() {
         await videoRef.current.play()
       }
       
-      setIsConnected(true)
-      setIsStreaming(true)
-      startProcessing()
+      // Connect WebSocket
+      const ws = new WebSocket(WS_URL)
+      
+      ws.onopen = () => {
+        console.log('WebSocket connected')
+        setIsConnected(true)
+        setIsStreaming(true)
+        startProcessing()
+      }
+      
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data) as DetectionResult
+        setDetection(data)
+        
+        // Calculate FPS
+        fpsCountRef.current++
+        const now = Date.now()
+        if (now - lastTimeRef.current >= 1000) {
+          setFps(fpsCountRef.current)
+          fpsCountRef.current = 0
+          lastTimeRef.current = now
+        }
+      }
+      
+      ws.onerror = (e) => {
+        console.error('WebSocket error:', e)
+        setError('Connection error. Make sure the backend is running.')
+      }
+      
+      ws.onclose = () => {
+        console.log('WebSocket closed')
+        setIsConnected(false)
+      }
+      
+      wsRef.current = ws
       
     } catch (err) {
       console.error('Error starting stream:', err)
@@ -94,6 +127,12 @@ export default function Home() {
     if (frameIdRef.current) {
       cancelAnimationFrame(frameIdRef.current)
       frameIdRef.current = 0
+    }
+    
+    // Close WebSocket
+    if (wsRef.current) {
+      wsRef.current.close()
+      wsRef.current = null
     }
     
     // Stop camera
@@ -112,11 +151,11 @@ export default function Home() {
     setFps(0)
   }, [])
 
-  // Process frames using HTTP POST (same as original app.py)
+  // Process frames
   const startProcessing = useCallback(() => {
-    const processFrame = async () => {
-      if (!videoRef.current || !canvasRef.current) return
-      if (isProcessingRef.current) return // Skip if still processing previous frame
+    const processFrame = () => {
+      if (!videoRef.current || !canvasRef.current || !wsRef.current) return
+      if (wsRef.current.readyState !== WebSocket.OPEN) return
       
       const video = videoRef.current
       const canvas = canvasRef.current
@@ -131,46 +170,17 @@ export default function Home() {
       canvas.width = video.videoWidth
       canvas.height = video.videoHeight
       
-      // Draw frame with mirror (same as original app.py JavaScript)
-      ctx.save()
-      ctx.scale(-1, 1)
-      ctx.drawImage(video, -canvas.width, 0)
-      ctx.restore()
+      // Draw frame WITHOUT mirroring for the model (model expects non-mirrored)
+      ctx.drawImage(video, 0, 0)
       
-      // Get base64 image (same quality as original: 0.7)
-      const imageData = canvas.toDataURL('image/jpeg', 0.7)
+      // Send frame to server at higher quality for better detection
+      const imageData = canvas.toDataURL('image/jpeg', 0.8)
+      wsRef.current.send(JSON.stringify({ image: imageData }))
       
-      isProcessingRef.current = true
-      
-      try {
-        // POST to /detect endpoint (same as original app.py)
-        const res = await fetch(`${API_URL}/detect`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ image: imageData })
-        })
-        
-        const data = await res.json() as DetectionResult
-        setDetection(data)
-        
-        // Calculate FPS
-        fpsCountRef.current++
-        const now = Date.now()
-        if (now - lastTimeRef.current >= 1000) {
-          setFps(fpsCountRef.current)
-          fpsCountRef.current = 0
-          lastTimeRef.current = now
-        }
-      } catch (e) {
-        console.error('Detection error:', e)
-      }
-      
-      isProcessingRef.current = false
-      
-      // Schedule next frame (~150ms interval, same as original app.py)
+      // Schedule next frame (~10fps for good balance of accuracy and performance)
       setTimeout(() => {
         frameIdRef.current = requestAnimationFrame(processFrame)
-      }, 150)
+      }, 100)
     }
     
     frameIdRef.current = requestAnimationFrame(processFrame)
