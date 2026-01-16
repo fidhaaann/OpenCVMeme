@@ -3,6 +3,7 @@ Fast Meme Classifier Training Script
 =====================================
 Trains models quickly without exhaustive hyperparameter search.
 Uses optimized default parameters for fast training (~30 seconds).
+BALANCED CLASS WEIGHTS to handle imbalanced data.
 """
 
 import numpy as np
@@ -20,6 +21,7 @@ from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, f1_score
+from sklearn.utils.class_weight import compute_class_weight
 from joblib import dump
 import warnings
 warnings.filterwarnings('ignore')
@@ -67,11 +69,19 @@ def train_fast():
     )
     print(f"\n🔀 Train: {len(X_train)}, Test: {len(X_test)}")
     
+    # Compute class weights to handle imbalanced data
+    classes = np.unique(y_train)
+    class_weights = compute_class_weight('balanced', classes=classes, y=y_train)
+    class_weight_dict = dict(zip(classes, class_weights))
+    print(f"\n⚖️  Class weights (balanced):")
+    for cls, weight in class_weight_dict.items():
+        print(f"   {cls}: {weight:.3f}")
+    
     results = {}
     
     # ========== 1. SVM (Fast - no grid search) ==========
     print("\n" + "="*50)
-    print("🚀 Training SVM (optimized defaults)...")
+    print("🚀 Training SVM (balanced class weights)...")
     t0 = time()
     
     svm_pipeline = Pipeline([
@@ -81,6 +91,7 @@ def train_fast():
             C=50,           # Good default for gesture data
             gamma='scale',  # Auto-scale based on features
             probability=True,
+            class_weight='balanced',  # BALANCED weights
             random_state=RANDOM_STATE
         ))
     ])
@@ -119,15 +130,16 @@ def train_fast():
     
     # ========== 3. Random Forest (Very Fast) ==========
     print("\n" + "="*50)
-    print("🚀 Training Random Forest...")
+    print("🚀 Training Random Forest (balanced)...")
     t0 = time()
     
     rf_pipeline = Pipeline([
         ('scaler', StandardScaler()),
         ('rf', RandomForestClassifier(
-            n_estimators=100,
+            n_estimators=200,  # More trees for better balance
             max_depth=20,
             min_samples_split=2,
+            class_weight='balanced',  # BALANCED weights
             n_jobs=-1,  # Use all CPU cores
             random_state=RANDOM_STATE
         ))
