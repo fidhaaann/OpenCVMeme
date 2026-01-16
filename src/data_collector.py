@@ -94,18 +94,14 @@ class MemeDataCollector:
                         if label in self.class_counts:
                             self.class_counts[label] += 1
                     
-                    print(f"📂 Loaded {len(self.samples)} existing samples")
+                    pass
                     self._print_class_counts()
             except Exception as e:
-                print(f"⚠️ Could not load existing data: {e}")
+                pass
     
     def _print_class_counts(self):
         """Print current sample counts per class."""
-        print("\n📊 Sample counts:")
-        for name, count in self.class_counts.items():
-            status = "✅" if count >= MIN_SAMPLES_PER_CLASS else "⚠️"
-            print(f"  {status} {name}: {count}")
-        print()
+        pass
     
     def _draw_ui(self, frame, detection_status):
         """Draw the user interface overlay on the frame."""
@@ -212,7 +208,7 @@ class MemeDataCollector:
     def save_dataset(self):
         """Save the collected dataset to CSV."""
         if len(self.samples) == 0:
-            print("⚠️ No samples to save!")
+            # ...existing code...
             return
         
         # Find the maximum feature length across all samples
@@ -232,22 +228,21 @@ class MemeDataCollector:
         
         # Save to CSV
         df.to_csv(CSV_OUTPUT, index=False)
-        print(f"\n💾 Dataset saved to {CSV_OUTPUT}")
-        print(f"   Total samples: {len(self.samples)}")
+        # ...existing code...
         self._print_class_counts()
         
         # Save backup with timestamp
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_path = os.path.join(DATASET_DIR, f"meme_features_backup_{timestamp}.csv")
         df.to_csv(backup_path, index=False)
-        print(f"   Backup saved to {backup_path}")
+        # ...existing code...
     
     def run(self):
         """Run the data collection interface."""
         cap = cv2.VideoCapture(0)
         
         if not cap.isOpened():
-            print("❌ Could not open webcam!")
+            # ...existing code...
             return
         
         # Set camera properties for better quality
@@ -255,22 +250,11 @@ class MemeDataCollector:
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
         cap.set(cv2.CAP_PROP_FPS, 30)
         
-        print("\n🎥 Meme Data Collector Started")
-        print("=" * 50)
-        print("Classes:")
+        # ...existing code...
         for key, name in MEME_CLASSES.items():
-            print(f"  {key}: {name}")
-        print("=" * 50)
-        print("\nControls:")
-        print("  1-6: Select meme class")
-        print("  SPACE: Start/stop continuous recording")
-        print("  S: Save single sample")
-        print("  D: Delete last sample")
-        print("  Q: Quit and save dataset")
-        print("=" * 50)
-        
+            pass
+        pass
         sample_interval = 1.0 / SAMPLES_PER_SECOND
-        
         try:
             while True:
                 ret, frame = cap.read()
@@ -310,11 +294,11 @@ class MemeDataCollector:
                     self.recording = not self.recording
                     if self.recording:
                         self.last_sample_time = time.time()
-                        print(f"🔴 Recording started for: {MEME_CLASSES[self.current_class]}")
+                        pass
                     else:
-                        print(f"⏹ Recording stopped. Samples: {self.class_counts[MEME_CLASSES[self.current_class]]}")
+                        pass
                 elif key == ord('s'):  # Single sample with 3-second timer
-                    print("📸 Get ready! Taking sample in 3 seconds...")
+                    pass
                     countdown_start = time.time()
                     
                     # 3-second countdown loop
@@ -353,25 +337,26 @@ class MemeDataCollector:
                         if self.extractor.has_valid_detection(results):
                             label = MEME_CLASSES[self.current_class]
                             self._add_sample(features, label)
-                            print(f"✅ Sample saved for: {label}")
+                            # ...existing code...
                         else:
-                            print("⚠️ No valid detection for sample!")
+                            # ...existing code...
                 elif key in [ord('1'), ord('2'), ord('3'), ord('4'), ord('5'), ord('6')]:
                     self.current_class = int(chr(key))
-                    print(f"🏷️ Selected class: {MEME_CLASSES[self.current_class]}")
+                    pass
                 elif key == ord('d'):  # Delete last sample
                     if len(self.samples) > 0:
                         removed_label = self.labels.pop()
                         self.samples.pop()
                         self.class_counts[removed_label] -= 1
-                        print(f"🗑️ Deleted last sample ({removed_label}). Total: {len(self.samples)}")
+                        pass
                     else:
-                        print("⚠️ No samples to delete!")
+                        pass
                     
         except KeyboardInterrupt:
-            print("\n⏹ Interrupted by user")
+            pass
         
         finally:
+            pass
             # Cleanup
             cap.release()
             cv2.destroyAllWindows()
@@ -394,7 +379,7 @@ def collect_from_video(video_path, label, output_csv=CSV_OUTPUT):
     
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        print(f"❌ Could not open video: {video_path}")
+        # ...existing code...
         return
     
     samples = []
@@ -402,8 +387,7 @@ def collect_from_video(video_path, label, output_csv=CSV_OUTPUT):
     frame_count = 0
     valid_count = 0
     
-    print(f"📹 Processing video: {video_path}")
-    print(f"   Label: {label}")
+    # ...existing code...
     
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     
@@ -428,12 +412,13 @@ def collect_from_video(video_path, label, output_csv=CSV_OUTPUT):
         
         # Progress
         if frame_count % 100 == 0:
-            print(f"   Progress: {frame_count}/{total_frames} frames, {valid_count} valid samples")
+            pass
     
+    pass
     cap.release()
     extractor.release()
     
-    print(f"✅ Extracted {valid_count} samples from {frame_count} frames")
+    # ...existing code...
     
     # Load existing data
     existing_samples = []
@@ -455,8 +440,7 @@ def collect_from_video(video_path, label, output_csv=CSV_OUTPUT):
     df['label'] = all_labels
     df.to_csv(output_csv, index=False)
     
-    print(f"💾 Saved to {output_csv}")
-    print(f"   Total samples: {len(all_samples)}")
+    # ...existing code...
 
 
 def batch_collect_from_videos(video_dir, output_csv=CSV_OUTPUT):
@@ -476,10 +460,10 @@ def batch_collect_from_videos(video_dir, output_csv=CSV_OUTPUT):
         output_csv: Output CSV path
     """
     if not os.path.exists(video_dir):
-        print(f"❌ Directory not found: {video_dir}")
+        # ...existing code...
         return
     
-    print(f"📂 Processing videos from: {video_dir}")
+    # ...existing code...
     
     for class_name in os.listdir(video_dir):
         class_path = os.path.join(video_dir, class_name)
@@ -488,7 +472,7 @@ def batch_collect_from_videos(video_dir, output_csv=CSV_OUTPUT):
             continue
         
         if class_name not in MEME_CLASSES.values():
-            print(f"⚠️ Skipping unknown class: {class_name}")
+            # ...existing code...
             continue
         
         print(f"\n📁 Processing class: {class_name}")
